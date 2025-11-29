@@ -5,6 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
+# Run the Number Game demo
+clj -M -m numbergame.core
+
 # Run Gen.clj learning examples
 clj -M -m ex01-distributions        # Probability distributions
 clj -M -m ex02-generative-functions # Generative functions and traces
@@ -12,9 +15,6 @@ clj -M -m ex03-choicemaps           # Choice maps and addressing
 clj -M -m ex04-inference            # Importance sampling inference
 clj -M -m ex05-trace-updates        # Trace updates and MH
 clj -M -m ex06-advanced             # Advanced features (assess, untraced, etc.)
-
-# Run main example
-clj -M -m numbergame.example
 
 # Start REPL
 clj
@@ -25,11 +25,19 @@ clj -X:test
 
 ## Project Structure
 
-- `Gen.clj/` - Gen.clj probabilistic programming library (git submodule)
-- `src/numbergame/` - Main source code
-- `examples/` - Gen.clj learning examples (ex01-ex06)
-- `docs/` - Comprehensive Gen.clj documentation
-- `deps.edn` - Clojure deps configuration (Gen.clj included as local dependency)
+```
+.
+├── Gen.clj/              # Gen.clj probabilistic programming library (git submodule)
+├── src/numbergame/       # Main source code
+│   ├── hypotheses.clj    # Hypothesis space (rules + intervals)
+│   ├── inference.clj     # Analytic Bayesian inference (size principle)
+│   ├── generalization.clj# Generalization predictions
+│   ├── model.clj         # Gen.clj generative model
+│   └── core.clj          # Main entry point with demo
+├── examples/             # Gen.clj learning examples (ex01-ex06)
+├── docs/                 # Comprehensive Gen.clj documentation
+└── deps.edn              # Clojure deps configuration
+```
 
 ## Documentation
 
@@ -43,27 +51,82 @@ See `docs/` for detailed Gen.clj documentation:
 
 ## Project Overview
 
-This is a Clojure project for building probabilistic and Bayesian models of cognition. The primary example is Tenenbaum's "number game" for concept learning, but the architecture is designed to support other learning, generalization, and inference tasks.
+This is a Clojure project implementing Tenenbaum's "Number Game" (1999) - a Bayesian model of concept learning. It demonstrates how humans learn abstract concepts from positive examples only.
+
+### The Number Game Task
+
+- A hidden concept is a subset of integers 1-100
+- Participants see positive examples (e.g., [16, 8, 2, 64])
+- They judge probability that other numbers belong to the concept
+
+### Key Findings the Model Captures
+
+- **Rule-like behavior**: [16, 8, 2, 64] → strongly predicts "powers of 2"
+- **Similarity-based behavior**: [16, 23, 19, 20] → smooth generalization in that range
+- Both emerge from the **same** Bayesian machinery
 
 ## Architecture
 
-The project has three layers:
+The project has two complementary approaches:
 
-1. **Core Bayesian Layer** - Pure Clojure logic for hypotheses, belief updates, and predictions. Everything is EDN data (maps, vectors) that can be inspected, logged, and serialized. No hidden mutable state in modeling code.
+### 1. Analytic Bayesian Layer
 
-2. **Probabilistic Programming Layer** - Built on Gen.clj for complex models requiring approximate inference (importance sampling, resampling). Used when closed-form Bayesian updates are insufficient.
+Pure Clojure functions for exact inference:
 
-3. **Interactive Layer** - Notebooks and REPL-driven exploration for visualizing belief dynamics.
+```clojure
+(require '[numbergame.inference :as infer]
+         '[numbergame.generalization :as gen])
 
-## Namespace Organization (planned)
+;; Compute posterior over 5,078 hypotheses
+(infer/posterior [16 8 2 64])
 
-- **Hypothesis space namespace** - Defines candidate concepts as data (identifier, member set, prior weight). For the number game: rule-based hypotheses ("multiples of 10", "powers of 2") and interval-based hypotheses ("between 16 and 23").
+;; Get top hypotheses
+(infer/top-hypotheses [16 8 2 64] 5)
+;; => [[:powers-of-2 0.9945] ...]
 
-- **Inference namespace** - `update-posterior` function that takes prior + new example → posterior using size principle (consistent examples contribute 1/|h| to likelihood).
+;; Generalization predictions
+(gen/p-in-concept [16 8 2 64] 32)  ;; => ~1.0
+(gen/p-in-concept [16 8 2 64] 20)  ;; => ~0.006
+```
 
-- **Generalization namespace** - Computes probability that a probe belongs to the concept by averaging over hypotheses weighted by posterior.
+### 2. Gen.clj Probabilistic Programming Layer
 
-- **Gen.clj namespaces** - Generative functions that sample hypotheses from priors, then sample examples/responses. Enables hierarchical priors, noise, graded membership.
+For simulation and potential extensions:
+
+```clojure
+(require '[numbergame.model :as model])
+
+;; Simulate concept + examples
+(model/simulate-with-hypothesis 4)
+;; => {:hypothesis {:id :powers-of-2 :members #{...}}
+;;     :examples [8 16 32 4]}
+
+;; Access full trace
+(let [tr (model/simulate 3)]
+  (trace/get-choices tr)
+  (trace/get-score tr))
+```
+
+## Key Implementation Details
+
+### Hypothesis Space
+
+- **Rule-based** (28 hypotheses): powers of 2, primes, multiples of k, odd/even, ends-in-d
+- **Interval-based** (5,050 hypotheses): all [a, b] where 1 ≤ a ≤ b ≤ 100
+
+### The Size Principle
+
+Likelihood: `P(examples | h) = |h|^(-n)` if all examples in h, else 0
+
+Smaller consistent hypotheses get exponentially more support as examples accumulate.
+
+### Priors Available
+
+```clojure
+numbergame.hypotheses/uniform-prior      ; Equal weight to all
+numbergame.hypotheses/rule-biased-prior  ; More weight to rules
+numbergame.hypotheses/size-biased-prior  ; Prefer medium-sized concepts
+```
 
 ## Gen.clj Usage Patterns
 
@@ -71,9 +134,10 @@ The project has three layers:
 (require '[gen.dynamic :as dynamic :refer [gen]]
          '[gen.distribution.commons-math :as dist]
          '[gen.generative-function :as gf]
-         '[gen.trace :as trace])
+         '[gen.trace :as trace]
+         '[gen.choicemap :as choicemap])
 
-;; Define generative function with traced random choices
+;; Define generative function
 (def my-model
   (gen [args]
     (let [x (dynamic/trace! :x dist/normal 0.0 1.0)]
@@ -82,18 +146,20 @@ The project has three layers:
 ;; Simulate (unconstrained)
 (gf/simulate my-model [args])
 
-;; Generate with constraints (for inference)
+;; Generate with constraints
 (gf/generate my-model [args] {:x 0.5})
 
 ;; Access trace data
-(trace/get-choices tr)   ; choice map
-(trace/get-retval tr)    ; return value
-(trace/get-score tr)     ; log probability
+(trace/get-choices tr)                    ; choice map
+(trace/get-retval tr)                     ; return value
+(trace/get-score tr)                      ; log probability
+(choicemap/get-value choices :x)          ; unwrap Choice → raw value
 ```
 
 ## Design Principles
 
 - State passed explicitly as arguments and returned as values
-- Beliefs (posteriors, particles, parameters) are always Clojure maps/vectors
-- Mutability for live experimental loops handled outside core logic via atoms
-- Tests verify: posterior normalization, sensible generalization curves, explicit handling of inconsistent observations
+- Beliefs (posteriors) are vectors of probabilities over hypotheses
+- Hypotheses are EDN maps: `{:id :keyword :members #{...}}`
+- Log-space computation for numerical stability
+- Analytic inference for speed, Gen.clj for extensibility
