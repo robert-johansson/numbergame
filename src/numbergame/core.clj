@@ -13,7 +13,8 @@
   (:require [numbergame.hypotheses :as h]
             [numbergame.inference :as infer]
             [numbergame.generalization :as gen]
-            [numbergame.model :as model]))
+            [numbergame.model :as model]
+            [numbergame.sequential :as seq]))
 
 ;; =============================================================================
 ;; Classic Number Game Stimuli (from Tenenbaum's experiments)
@@ -194,6 +195,27 @@
   (println "  - [16 23 19 20] predicts numbers in that range")
   (println "  - Single examples [16] spread probability more broadly"))
 
+(defn demo-sequential-filtering
+  "Demonstrate sequential hypothesis pruning."
+  []
+  (println "\n" (apply str (repeat 70 "=")) "\n")
+  (println "SEQUENTIAL HYPOTHESIS FILTERING")
+  (println (apply str (repeat 70 "=")) "\n")
+
+  (println "Instead of computing likelihoods for all 5,078 hypotheses,")
+  (println "we prune impossible ones as each example arrives.\n")
+
+  (println "Powers-of-2 stimulus:")
+  (seq/print-pruning [16 8 2 64])
+
+  (println "\n\nInterval-like stimulus:")
+  (seq/print-pruning [16 23 19 20])
+
+  (println "\nKey insight:")
+  (println "  - Rule-like examples (powers of 2) prune aggressively")
+  (println "  - Interval examples prune less (19, 20 add no new info)")
+  (println "  - This matches intuition about 'surprising' vs 'expected' examples"))
+
 ;; =============================================================================
 ;; Main
 ;; =============================================================================
@@ -212,6 +234,7 @@
   (demo-posterior)
   (demo-generalization)
   (demo-sequential-learning)
+  (demo-sequential-filtering)
   (demo-gen-clj-model)
   (demo-comparison)
 
