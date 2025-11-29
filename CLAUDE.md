@@ -6,11 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Run Gen.clj learning examples
-clj -M -m ex01-distributions       # Probability distributions
+clj -M -m ex01-distributions        # Probability distributions
 clj -M -m ex02-generative-functions # Generative functions and traces
-clj -M -m ex03-choicemaps          # Choice maps and addressing
-clj -M -m ex04-inference           # Importance sampling inference
-clj -M -m ex05-trace-updates       # Trace updates and MH
+clj -M -m ex03-choicemaps           # Choice maps and addressing
+clj -M -m ex04-inference            # Importance sampling inference
+clj -M -m ex05-trace-updates        # Trace updates and MH
+clj -M -m ex06-advanced             # Advanced features (assess, untraced, etc.)
 
 # Run main example
 clj -M -m numbergame.example
@@ -26,8 +27,19 @@ clj -X:test
 
 - `Gen.clj/` - Gen.clj probabilistic programming library (git submodule)
 - `src/numbergame/` - Main source code
-- `examples/` - Gen.clj learning examples (ex01-ex05)
+- `examples/` - Gen.clj learning examples (ex01-ex06)
+- `docs/` - Comprehensive Gen.clj documentation
 - `deps.edn` - Clojure deps configuration (Gen.clj included as local dependency)
+
+## Documentation
+
+See `docs/` for detailed Gen.clj documentation:
+- `gen-clj.md` - Overview and getting started
+- `distributions.md` - Probability distributions
+- `generative-functions.md` - The `gen` macro and composition
+- `traces-and-choicemaps.md` - Working with traces
+- `inference.md` - Inference algorithms
+- `api-reference.md` - Quick API reference
 
 ## Project Overview
 
