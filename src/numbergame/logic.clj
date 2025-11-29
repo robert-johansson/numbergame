@@ -326,24 +326,91 @@
   (count (concept-extension prog)))
 
 ;; =============================================================================
-;; Ranking by Size Principle
+;; Priors (as data!)
+;; =============================================================================
+
+(def uniform-prior
+  "Equal weight to all program types."
+  {:power-of 1.0
+   :mult 1.0
+   :range 1.0
+   :prime 1.0
+   :square 1.0
+   :even 1.0
+   :odd 1.0
+   :union 1.0
+   :intersect 1.0})
+
+(def rule-biased-prior
+  "Strongly prefer mathematical rules over intervals.
+   This makes 'primes' beat 'range 7-17' for [7 11 13 17]."
+  {:power-of 10.0   ; Mathematical pattern
+   :mult 10.0       ; Mathematical pattern
+   :range 1.0       ; Generic interval (baseline)
+   :prime 10.0      ; Named mathematical set
+   :square 10.0     ; Named mathematical set
+   :even 5.0        ; Simple rule
+   :odd 5.0         ; Simple rule
+   :union 0.5       ; Penalize compositions slightly
+   :intersect 0.5})
+
+(def specificity-prior
+  "Prefer more specific/constrained concepts."
+  {:power-of 20.0   ; Very specific pattern
+   :mult 5.0        ; Moderately specific
+   :range 1.0       ; Can be anything
+   :prime 15.0      ; Specific named set
+   :square 15.0     ; Specific named set
+   :even 2.0        ; Very broad
+   :odd 2.0         ; Very broad
+   :union 0.3
+   :intersect 0.3})
+
+(defn log-prior
+  "Compute log prior for a program given a prior map.
+
+   Key insight from Tenenbaum: The prior for a SPECIFIC interval [a,b]
+   should be much lower than for a named rule like 'primes', because
+   there are ~5000 possible intervals but only one 'primes' concept.
+
+   We model this by dividing interval priors by the number of intervals."
+  [prior prog]
+  (let [prog-type (first prog)
+        base-weight (get prior prog-type 1.0)
+        ;; Intervals get divided by approximate count of possible intervals
+        ;; This concentrates probability on named rules
+        adjusted-weight (if (= prog-type :range)
+                          (/ base-weight 5000.0)
+                          base-weight)]
+    (Math/log adjusted-weight)))
+
+;; =============================================================================
+;; Ranking by Posterior (Prior × Likelihood)
 ;; =============================================================================
 
 (defn rank-programs
-  "Rank programs by size principle: smaller concepts = higher likelihood.
-   Returns sorted list with log-likelihood scores."
-  [programs examples]
-  (let [n (count examples)]
-    (->> programs
-         (map (fn [prog]
-                (let [size (concept-size prog)
-                      ;; Avoid log(0)
-                      safe-size (max 1 size)
-                      log-like (- (* n (Math/log safe-size)))]
-                  {:program prog
-                   :size size
-                   :log-likelihood log-like})))
-         (sort-by :log-likelihood >))))
+  "Rank programs by posterior: prior × likelihood.
+   Uses size principle for likelihood, optional prior map.
+   Returns sorted list with scores."
+  ([programs examples] (rank-programs programs examples uniform-prior))
+  ([programs examples prior]
+   (let [n (count examples)
+         ;; Normalize prior weights to sum to 1
+         total-prior (reduce + (vals prior))
+         norm-prior (into {} (map (fn [[k v]] [k (/ v total-prior)]) prior))]
+     (->> programs
+          (map (fn [prog]
+                 (let [size (concept-size prog)
+                       safe-size (max 1 size)
+                       log-like (- (* n (Math/log safe-size)))
+                       log-pr (log-prior norm-prior prog)
+                       log-post (+ log-pr log-like)]
+                   {:program prog
+                    :size size
+                    :log-prior log-pr
+                    :log-likelihood log-like
+                    :log-posterior log-post})))
+          (sort-by :log-posterior >)))))
 
 ;; =============================================================================
 ;; Full Synthesis Pipeline
@@ -356,28 +423,43 @@
    - examples: vector of positive examples (e.g., [16 8 2 64])
    - max-programs: maximum number of programs to find
    - depth: composition depth (0 = primitives only, 1 = one level of union/intersect)
+   - prior: prior map (default: uniform-prior)
 
    Returns map with:
    - :examples - input examples
    - :n-found - number of programs found
-   - :top-programs - ranked programs with size and log-likelihood"
-  ([examples] (synthesize examples 100 1))
-  ([examples max-programs] (synthesize examples max-programs 1))
-  ([examples max-programs depth]
+   - :top-programs - ranked programs with scores"
+  ([examples] (synthesize examples 100 1 uniform-prior))
+  ([examples max-programs] (synthesize examples max-programs 1 uniform-prior))
+  ([examples max-programs depth] (synthesize examples max-programs depth uniform-prior))
+  ([examples max-programs depth prior]
    (let [programs (find-programs examples max-programs depth)
-         ranked (rank-programs programs examples)]
+         ranked (rank-programs programs examples prior)]
      {:examples examples
+      :prior (if (= prior uniform-prior) :uniform
+               (if (= prior rule-biased-prior) :rule-biased
+                 :custom))
       :n-found (count programs)
       :top-programs (take 10 ranked)})))
 
 (defn synthesize-primitives
   "Synthesize using only primitive concepts (no compositions).
-   Faster and often sufficient."
-  ([examples] (synthesize-primitives examples 50))
-  ([examples max-programs]
+   Faster and often sufficient.
+
+   Arguments:
+   - examples: vector of positive examples
+   - max-programs: maximum programs to find (default 50)
+   - prior: prior map (default: uniform-prior)"
+  ([examples] (synthesize-primitives examples 50 uniform-prior))
+  ([examples max-programs] (synthesize-primitives examples max-programs uniform-prior))
+  ([examples max-programs prior]
    (let [programs (find-programs-primitives examples max-programs)
-         ranked (rank-programs programs examples)]
+         ranked (rank-programs programs examples prior)]
      {:examples examples
+      :prior (cond (= prior uniform-prior) :uniform
+                   (= prior rule-biased-prior) :rule-biased
+                   (= prior specificity-prior) :specificity
+                   :else :custom)
       :n-found (count programs)
       :top-programs (take 10 ranked)})))
 
@@ -402,10 +484,50 @@
     (println (str name ": " examples))
     (let [{:keys [n-found top-programs]} (synthesize-primitives examples 20)]
       (println (format "  Found %d consistent programs" n-found))
-      (doseq [{:keys [program size log-likelihood]} (take 3 top-programs)]
-        (println (format "    %-25s size: %3d  log-like: %.2f"
-                        (pr-str program) size log-likelihood))))
+      (doseq [{:keys [program size log-posterior]} (take 3 top-programs)]
+        (println (format "    %-25s size: %3d  log-post: %.2f"
+                        (pr-str program) size log-posterior))))
     (println)))
+
+(defn demo-priors
+  "Demonstrate how different priors affect hypothesis ranking."
+  []
+  (println "\n" (apply str (repeat 70 "=")) "\n")
+  (println "EFFECT OF PRIORS ON HYPOTHESIS RANKING")
+  (println (apply str (repeat 70 "=")) "\n")
+
+  (println "The same examples can yield different top hypotheses")
+  (println "depending on the prior over program types.\n")
+
+  (let [examples [7 11 13 17]]
+    (println "Examples:" examples "\n")
+
+    (println "1. UNIFORM PRIOR (all types equal)")
+    (println "   Size principle dominates - smaller hypotheses win")
+    (let [{:keys [top-programs]} (synthesize-primitives examples 30 uniform-prior)]
+      (doseq [{:keys [program size]} (take 3 top-programs)]
+        (println (format "     %-20s size: %d" (pr-str program) size))))
+
+    (println "\n2. RULE-BIASED PRIOR (prefer mathematical concepts)")
+    (println "   Rules get 10x weight over intervals")
+    (let [{:keys [top-programs]} (synthesize-primitives examples 30 rule-biased-prior)]
+      (doseq [{:keys [program size]} (take 3 top-programs)]
+        (println (format "     %-20s size: %d" (pr-str program) size))))
+
+    (println "\n3. SPECIFICITY PRIOR (prefer constrained concepts)")
+    (println "   Powers get 20x, primes get 15x")
+    (let [{:keys [top-programs]} (synthesize-primitives examples 30 specificity-prior)]
+      (doseq [{:keys [program size]} (take 3 top-programs)]
+        (println (format "     %-20s size: %d" (pr-str program) size)))))
+
+  (println "\n" (apply str (repeat 70 "-")) "\n")
+
+  (println "Custom priors are just maps - very Clojure!")
+  (println "  (synthesize-primitives [7 11 13 17] 30 {:prime 100.0 :range 1.0 ...})\n")
+
+  (println "Or compose priors with merge/update:")
+  (println "  (merge uniform-prior {:prime 50.0})  ; boost just primes")
+  (println "  (update rule-biased-prior :range * 0.1)  ; penalize ranges more"))
 
 (defn show-extension
   "Show the extension (members) of a program."
