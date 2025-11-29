@@ -3,7 +3,9 @@
  :deps
  {org.clojure/clojure {:mvn/version "1.11.1"}
   ;; Gen.clj as local dependency from submodule
-  io.github.probcomp/gen.clj {:local/root "Gen.clj"}}
+  io.github.probcomp/gen.clj {:local/root "Gen.clj"}
+  ;; core.logic for intensional program synthesis
+  org.clojure/core.logic {:mvn/version "1.0.1"}}
 
  :aliases
  {:dev
